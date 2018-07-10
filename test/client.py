@@ -1,7 +1,7 @@
 #! /usr/bin/env python
 #! _*_ coding:utf-8 _*_
 
-import socket, json
+import os, sys, socket, json, base64
 import logging, traceback
 
 class client():
@@ -9,6 +9,18 @@ class client():
         self.server = server
         self.port = port
     def __call__(self):
+        try:
+            sock = socket.socket()
+            sock.connect((self.server, self.port))
+            (p_addr, p_port) = sock.getpeername()
+            print("Connected to {0}:{1}".format(p_addr, p_port))
+            sockf = sock.makefile(mode="rw")
+        except socket.error as e:
+            print("Socket Error")
+            sys.exit(1)
+        except:
+            print(traceback.format_exc())
+            sys.exit(1)
         try:
             sock = socket.socket()
             sock.connect((self.server, self.port))
@@ -25,9 +37,21 @@ class client():
                 if msg["type"] == "hello":
                     self.upgrade(sockf)
                 elif msg["type"] == "upgrade":
-                    pass
+                    if msg["step"] == "filename":
+                        new_filename = msg["filename"]
+                    elif msg["step"] == "begin":
+                        new_file = open(new_filename, "wb")
+                    elif msg["step"] == "data":
+                        new_data = base64.b64decode(msg["data"])
+                        new_file.write(new_data)
+                    elif msg["step"] == "finish":
+                        new_file.close()
+                        break
         except KeyboardInterrupt:
             print("\rKeyboardInterrupt")
+            sock.close()
+        except socket.error as e:
+            print("Socket Error")
             sock.close()
         except:
             sock.close()

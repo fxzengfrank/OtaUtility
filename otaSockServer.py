@@ -34,81 +34,89 @@ class skThread(threading.Thread):
                         continue
                     if type(self.c_version) is not int:
                         continue
-                    rmsg = dict()
-                    rmsg["type"] = "hello"
-                    print("rmsg = {0}".format(repr(rmsg)))
-                    self.sockf.write("{0}\n".format(json.dumps(rmsg)))
-                    self.sockf.flush()
+                    self.hello(self.sockf)
                 elif msg["type"] == "upgrade":
                     filen = msg["file"]
                     if type(filen) is not unicode:
                         continue
-                    lf = list()
-                    for f in os.listdir(self.fdir):
-                        if f.endswith("_{0}".format(filen)):
-                            lf.append(f)
-                    if len(lf) == 0:
-                        rmsg = dict()
-                        rmsg["type"] = "upgrade"
-                        rmsg["file"] = None
-                        print("rmsg = {0}".format(repr(rmsg)))
-                        self.sockf.write("{0}\n".format(json.dumps(rmsg)))
-                        self.sockf.flush()
-                    else:
-                        max_version = 0
-                        max_filename = None
-                        for f in lf:
-                            v = int(f.split("_{0}".format(filen))[0])
-                            if v > max_version:
-                                max_version = v
-                                max_filename = f
-                        if max_version > self.c_version and max_filename != None:
-                            with open(os.path.join(self.fdir, max_filename), "rb") as fo:
-                                b = fo.read(512)
-                                if len(b) == 0:
-                                    rmsg = dict()
-                                    rmsg["type"] = "upgrade"
-                                    rmsg["file"] = max_filename
-                                    rmsg["data"] = base64.b64encode(b)
-                                    rmsg["next"] = False
-                                    print("rmsg = {0}".format(repr(rmsg)))
-                                    self.sockf.write("{0}\n".format(json.dumps(rmsg)))
-                                    self.sockf.flush()
-                                    continue
-                                while len(b) > 0:
-                                    c = fo.read(512)
-                                    if len(c) > 0:
-                                        rmsg = dict()
-                                        rmsg["type"] = "upgrade"
-                                        rmsg["file"] = max_filename
-                                        rmsg["data"] = base64.b64encode(b)
-                                        rmsg["next"] = True
-                                        print("rmsg = {0}".format(repr(rmsg)))
-                                        self.sockf.write("{0}\n".format(json.dumps(rmsg)))
-                                        self.sockf.flush()
-                                        b = c
-                                    else:
-                                        rmsg = dict()
-                                        rmsg["type"] = "upgrade"
-                                        rmsg["file"] = max_filename
-                                        rmsg["data"] = base64.b64encode(b)
-                                        rmsg["next"] = False
-                                        print("rmsg = {0}".format(repr(rmsg)))
-                                        self.sockf.write("{0}\n".format(json.dumps(rmsg)))
-                                        self.sockf.flush()
-                                        b = c
-                        else:
-                            rmsg = dict()
-                            rmsg["type"] = "upgrade"
-                            rmsg["file"] = None
-                            print("rmsg = {0}".format(repr(rmsg)))
-                            self.sockf.write("{0}\n".format(json.dumps(rmsg)))
-                            self.sockf.flush()
+                    filename = self.find_filename(self.fdir, filen, self.c_version)
+                    self.upgrade_filename(self.sockf, filename)
+                    if filename is not None:
+                        filepath = os.path.join(self.fdir, filename)
+                        self.send_file(self.sockf, filepath)
         except:
             self.sock.close()
             print(traceback.format_exc())
         finally:
             print("Disconnected from {0}:{1}".format(p_addr, p_port))
+    #
+    def send_msg(self, sockf, msg):
+        sockf.write("{0}\n".format(json.dumps(msg)))
+        sockf.flush()
+        #print("send_msg: {0}".format(repr(msg)))
+    #
+    def hello(self, sockf):
+        msg = dict()
+        msg["type"] = "hello"
+        self.send_msg(sockf, msg)
+    #
+    def find_filename(self, fdir, filename, version):
+        lf = list()
+        for fn in os.listdir(fdir):
+            if fn.endswith("_{0}".format(filename)):
+                lf.append(fn)
+        if len(lf) == 0:
+            return None
+        max_version = 0
+        max_filename = None
+        for f in lf:
+            v = int(f.split("_{0}".format(filename))[0])
+            if v > max_version:
+                max_version = v
+                max_filename = f
+        if max_version > version and max_filename != None:
+            return max_filename
+        else:
+            return None
+    #
+    def upgrade_filename(self, sockf, filename):
+        msg = dict()
+        msg["type"] = "upgrade"
+        msg["step"] = "filename"
+        msg["filename"] = filename
+        self.send_msg(sockf, msg)
+    #
+    def upgrade_begin(self, sockf):
+        msg = dict()
+        msg["type"] = "upgrade"
+        msg["step"] = "begin"
+        self.send_msg(sockf, msg)
+    #
+    def upgrade_data(self, sockf, data):
+        msg = dict()
+        msg["type"] = "upgrade"
+        msg["step"] = "data"
+        msg["data"] = base64.b64encode(data)
+        self.send_msg(sockf, msg)
+    #
+    def upgrade_finish(self, sockf):
+        msg = dict()
+        msg["type"] = "upgrade"
+        msg["step"] = "finish"
+        self.send_msg(sockf, msg)
+    #
+    def send_file(self, sockf, filepath):
+        #print("filepath: {0}".format(filepath))
+        with open(filepath, "rb") as f:
+            self.upgrade_begin(sockf)
+            while True:
+                data = f.read(512)
+                #print("len(data): {0}".format(len(data)))
+                if len(data) == 0:
+                    break
+                self.upgrade_data(sockf, data)
+            self.upgrade_finish(sockf)
+    #
 #
 class ota():
     def __init__(self, port=9999):
